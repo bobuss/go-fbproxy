@@ -40,7 +40,9 @@ func profile(w http.ResponseWriter, r *http.Request) {
       res, _ := fb.Get("/" + fbuid, fb.Params{
         "fields": "username",
       })
-      out = res["username"].(string)
+      var username string
+      res.DecodeField("username", &username)
+      out = username
       memory[fbuid] = out
     }
     mutex.Unlock()
