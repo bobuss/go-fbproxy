@@ -2,32 +2,52 @@ package main
 
 import (
 	"fmt"
+  "flag"
 	"html"
 	"log"
   "sync"
 	"net/http"
 	"github.com/gorilla/mux"
 	fb "github.com/huandu/facebook"
-  //"github.com/garyburd/redigo/redis"
+  "github.com/garyburd/redigo/redis"
 )
 
-// const (
-//     ADDRESS = "127.0.0.1:6379"
-// )
+const (
+    ADDRESS = "127.0.0.1:6379"
+)
 
 var (
+  redisAddress   = flag.String("redis-address", ":6379", "Address to the Redis server")
+  maxConnections = flag.Int("max-connections", 10, "Max connections to Redis")
   mutex = &sync.Mutex{}
-  memory = make(map[string]string)
-  //conn, err = redis.Dial("tcp", ADDRESS)
 )
 
+func SetupRedis() *redis.Pool {
+  return redis.NewPool(func() (redis.Conn, error) {
+    c, err := redis.Dial("tcp", *redisAddress)
+
+    if err != nil {
+      panic(err)
+    }
+
+    return c, err
+  }, *maxConnections)
+}
+
+
 func main() {
-  // if err != nil {
-  //   log.Fatal(err)
-  // }
+
+  flag.Parse()
+
+  redisPool := SetupRedis()
+  defer redisPool.Close()
 
   rtr := mux.NewRouter()
-  rtr.HandleFunc("/user/{fbuid:[0-9]+}/profile", profile).Methods("GET")
+  rtr.HandleFunc("/user/{fbuid:[0-9]+}/profile", func (w http.ResponseWriter, r *http.Request) {
+
+    profile(w, r, redisPool)
+
+  }).Methods("GET")
 
   http.Handle("/", rtr)
 
@@ -35,7 +55,7 @@ func main() {
   http.ListenAndServe(":3000", nil)
 }
 
-func profile(w http.ResponseWriter, r *http.Request) {
+func profile(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
   params := mux.Vars(r)
   fbuid := params["fbuid"]
 
@@ -46,11 +66,18 @@ func profile(w http.ResponseWriter, r *http.Request) {
     var key string
     key = "fbproxy:" + fbuid + ":profile"
 
-    // n, _ := conn.Do("GET", key)
+    conn := pool.Get()
+    defer conn.Close()
+
+    n, err := conn.Do("GET", key)
+
+    if err != nil {
+      log.Println(err)
+    }
 
     mutex.Lock()
-    out, ok := memory[key]
-    if !ok {
+
+    if n == nil {
 
       log.Println("Calling Facebook")
       res, _ := fb.Get("/" + fbuid, fb.Params{
@@ -58,11 +85,12 @@ func profile(w http.ResponseWriter, r *http.Request) {
       })
       var username string
       res.DecodeField("username", &username)
-      memory[key] = username
+      conn.Do("SET", key, username)
       messages <- username
 
     } else {
-      messages <- out
+      username, _ := redis.String(n, nil)
+      messages <- username
     }
     mutex.Unlock()
 
