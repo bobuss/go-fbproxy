@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-  "flag"
 	"html"
 	"log"
   "sync"
@@ -10,15 +9,13 @@ import (
 	"github.com/gorilla/mux"
 	fb "github.com/huandu/facebook"
   "github.com/garyburd/redigo/redis"
-)
-
-const (
-    ADDRESS = "127.0.0.1:6379"
+  flag "github.com/ogier/pflag"
 )
 
 var (
-  redisAddress   = flag.String("redis-address", ":6379", "Address to the Redis server")
+  redisAddress   = flag.String("redis-address", "127.0.0.1:6379", "Address to the Redis server")
   maxConnections = flag.Int("max-connections", 10, "Max connections to Redis")
+  ttl = flag.Int("ttl", 300, "Time-to-live of the backend")
   mutex = &sync.Mutex{}
 )
 
@@ -90,7 +87,7 @@ func profile(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
         })
         var username string
         res.DecodeField("username", &username)
-        conn.Do("SET", key, username)
+        conn.Do("SET", key, username, "EX", 300)
         messages <- username
 
       } else {
