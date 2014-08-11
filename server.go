@@ -8,15 +8,24 @@ import (
 	"net/http"
 	"github.com/gorilla/mux"
 	fb "github.com/huandu/facebook"
+  //"github.com/garyburd/redigo/redis"
 )
 
+// const (
+//     ADDRESS = "127.0.0.1:6379"
+// )
 
 var (
   mutex = &sync.Mutex{}
   memory = make(map[string]string)
+  //conn, err = redis.Dial("tcp", ADDRESS)
 )
 
 func main() {
+  // if err != nil {
+  //   log.Fatal(err)
+  // }
+
   rtr := mux.NewRouter()
   rtr.HandleFunc("/user/{fbuid:[0-9]+}/profile", profile).Methods("GET")
 
@@ -30,23 +39,34 @@ func profile(w http.ResponseWriter, r *http.Request) {
   params := mux.Vars(r)
   fbuid := params["fbuid"]
 
-  out, ok := memory[fbuid]
+  messages := make(chan string)
 
-  if !ok {
+  go func(fbuid string) {
+
+    var key string
+    key = "fbproxy:" + fbuid + ":profile"
+
+    // n, _ := conn.Do("GET", key)
+
     mutex.Lock()
-    out, ok := memory[fbuid]
+    out, ok := memory[key]
     if !ok {
-      fmt.Println("Calling Facebook")
+
+      log.Println("Calling Facebook")
       res, _ := fb.Get("/" + fbuid, fb.Params{
         "fields": "username",
       })
       var username string
       res.DecodeField("username", &username)
-      out = username
-      memory[fbuid] = out
+      memory[key] = username
+      messages <- username
+
+    } else {
+      messages <- out
     }
     mutex.Unlock()
-  }
 
-  fmt.Fprintf(w, "Hello, %q", html.EscapeString(out))
+  }(fbuid)
+
+  fmt.Fprintf(w, "Hello, %q", html.EscapeString(<- messages))
 }
