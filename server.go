@@ -10,6 +10,7 @@ import (
 	fb "github.com/huandu/facebook"
   "github.com/garyburd/redigo/redis"
   flag "github.com/ogier/pflag"
+  storage "./storage"
 )
 
 
@@ -21,8 +22,14 @@ var (
 )
 
 
-func SetupRedis() *redis.Pool {
-  return redis.NewPool(func() (redis.Conn, error) {
+func SetupMemory() storage.Storage {
+  m := make(map[string]string)
+  return storage.Memory{m}
+}
+
+
+func SetupRedis() storage.Storage {
+  p := redis.NewPool(func() (redis.Conn, error) {
     c, err := redis.Dial("tcp", *redisAddress)
 
     if err != nil {
@@ -31,10 +38,13 @@ func SetupRedis() *redis.Pool {
 
     return c, err
   }, *maxConnections)
+
+  store := storage.Redis{p}
+  return store
 }
 
 
-func profileHander(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
+func profileHander(w http.ResponseWriter, r *http.Request, store storage.Storage) {
   params := mux.Vars(r)
   fbuid := params["fbuid"]
 
@@ -45,23 +55,16 @@ func profileHander(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
     var key string
     key = "fbproxy:" + fbuid + ":profile"
 
-    conn := pool.Get()
-    defer conn.Close()
+    n := store.Get(key)
 
-    n, err := conn.Do("GET", key)
-
-    if err != nil {
-      log.Println(err)
-    }
-
-    if n == nil {
+    if n == "" {
 
       mutex.Lock()
 
       // check a second time, if a value was set by another goroutine
-      n, _ := conn.Do("GET", key)
+      n := store.Get(key)
 
-      if n == nil {
+      if n == "" {
 
         log.Println("Calling Facebook")
         res, _ := fb.Get("/" + fbuid, fb.Params{
@@ -69,7 +72,7 @@ func profileHander(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
         })
         var username string
         res.DecodeField("username", &username)
-        conn.Do("SET", key, username, "EX", 300)
+        store.Set(key, username, 300)
         messages <- username
 
       } else {
@@ -92,13 +95,14 @@ func main() {
 
   flag.Parse()
 
-  redisPool := SetupRedis()
-  defer redisPool.Close()
+  //store := SetupRedis()
+  store := SetupMemory()
+  //defer redisPool.Close()
 
   router := mux.NewRouter()
 
   router.HandleFunc("/user/{fbuid:[0-9]+}/profile", func (w http.ResponseWriter, r *http.Request) {
-    profileHander(w, r, redisPool)
+    profileHander(w, r, store)
   }).Methods("GET")
 
   router.HandleFunc("/ping/", func (w http.ResponseWriter, r *http.Request){
