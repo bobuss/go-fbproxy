@@ -75,24 +75,34 @@ func profile(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
       log.Println(err)
     }
 
-    mutex.Lock()
-
     if n == nil {
 
-      log.Println("Calling Facebook")
-      res, _ := fb.Get("/" + fbuid, fb.Params{
-        "fields": "username",
-      })
-      var username string
-      res.DecodeField("username", &username)
-      conn.Do("SET", key, username)
-      messages <- username
+      mutex.Lock()
 
+      // check a second time, if a value was set by another goroutine
+      n, _ := conn.Do("GET", key)
+
+      if n == nil {
+
+        log.Println("Calling Facebook")
+        res, _ := fb.Get("/" + fbuid, fb.Params{
+          "fields": "username",
+        })
+        var username string
+        res.DecodeField("username", &username)
+        conn.Do("SET", key, username)
+        messages <- username
+
+      } else {
+        username, _ := redis.String(n, nil)
+        messages <- username
+      }
+      mutex.Unlock()
     } else {
       username, _ := redis.String(n, nil)
       messages <- username
     }
-    mutex.Unlock()
+
 
   }(fbuid)
 
