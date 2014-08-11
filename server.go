@@ -12,12 +12,14 @@ import (
   flag "github.com/ogier/pflag"
 )
 
+
 var (
   redisAddress   = flag.String("redis-address", "127.0.0.1:6379", "Address to the Redis server")
   maxConnections = flag.Int("max-connections", 10, "Max connections to Redis")
   ttl = flag.Int("ttl", 300, "Time-to-live of the backend")
   mutex = &sync.Mutex{}
 )
+
 
 func SetupRedis() *redis.Pool {
   return redis.NewPool(func() (redis.Conn, error) {
@@ -32,27 +34,7 @@ func SetupRedis() *redis.Pool {
 }
 
 
-func main() {
-
-  flag.Parse()
-
-  redisPool := SetupRedis()
-  defer redisPool.Close()
-
-  rtr := mux.NewRouter()
-  rtr.HandleFunc("/user/{fbuid:[0-9]+}/profile", func (w http.ResponseWriter, r *http.Request) {
-
-    profile(w, r, redisPool)
-
-  }).Methods("GET")
-
-  http.Handle("/", rtr)
-
-  log.Println("Listening...")
-  http.ListenAndServe(":3000", nil)
-}
-
-func profile(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
+func profileHander(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
   params := mux.Vars(r)
   fbuid := params["fbuid"]
 
@@ -100,8 +82,31 @@ func profile(w http.ResponseWriter, r *http.Request, pool *redis.Pool) {
       messages <- username
     }
 
-
   }(fbuid)
 
   fmt.Fprintf(w, "Hello, %q", html.EscapeString(<- messages))
+}
+
+
+func main() {
+
+  flag.Parse()
+
+  redisPool := SetupRedis()
+  defer redisPool.Close()
+
+  router := mux.NewRouter()
+
+  router.HandleFunc("/user/{fbuid:[0-9]+}/profile", func (w http.ResponseWriter, r *http.Request) {
+    profileHander(w, r, redisPool)
+  }).Methods("GET")
+
+  router.HandleFunc("/ping/", func (w http.ResponseWriter, r *http.Request){
+    fmt.Fprintf(w, "pong")
+  }).Methods("GET")
+
+  http.Handle("/", router)
+
+  log.Println("Listening...")
+  http.ListenAndServe(":3000", nil)
 }
