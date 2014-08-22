@@ -2,21 +2,21 @@ package main
 
 import (
 	"fmt"
-	"html"
 	"log"
   "sync"
+  "io"
+  "bytes"
 	"net/http"
 	"github.com/gorilla/mux"
-	fb "github.com/huandu/facebook"
-  "github.com/garyburd/redigo/redis"
+  //"github.com/garyburd/redigo/redis"
   flag "github.com/ogier/pflag"
   storage "./storage"
 )
 
+const GRAPH_API = "https://graph.facebook.com"
 
 var (
-  redisAddress   = flag.String("redis-address", "127.0.0.1:6379", "Address to the Redis server")
-  maxConnections = flag.Int("max-connections", 10, "Max connections to Redis")
+  redisAddress = flag.String("redis-address", "127.0.0.1:6379", "Address to the Redis server")
   ttl = flag.Int("ttl", 300, "Time-to-live of the backend")
   mutex = &sync.Mutex{}
 )
@@ -29,16 +29,7 @@ func SetupMemory() storage.Storage {
 
 
 func SetupRedis() storage.Storage {
-  p := redis.NewPool(func() (redis.Conn, error) {
-    c, err := redis.Dial("tcp", *redisAddress)
-
-    if err != nil {
-      panic(err)
-    }
-
-    return c, err
-  }, *maxConnections)
-
+  p := storage.NewPool(*redisAddress)
   store := storage.Redis{p}
   return store
 }
@@ -47,47 +38,63 @@ func SetupRedis() storage.Storage {
 func profileHander(w http.ResponseWriter, r *http.Request, store storage.Storage) {
   params := mux.Vars(r)
   fbuid := params["fbuid"]
+  request_path := r.URL.Query().Get("fields")
 
-  messages := make(chan string)
+  messages := make(chan []byte)
 
-  go func(fbuid string) {
+  go func(fbuid, request_path string) {
 
     var key string
-    key = "fbproxy:" + fbuid + ":profile"
+    key = "fbproxy:" + fbuid + "/" + request_path
 
-    n := store.Get(key)
+    read := store.Get(key)
 
-    if n == "" {
+    if read == "" {
 
       mutex.Lock()
 
       // check a second time, if a value was set by another goroutine
-      n := store.Get(key)
+      read := store.Get(key)
 
-      if n == "" {
+      if read == "" {
 
-        log.Println("Calling Facebook")
-        res, _ := fb.Get("/" + fbuid, fb.Params{
-          "fields": "username",
-        })
-        var username string
-        res.DecodeField("username", &username)
-        store.Set(key, username, 300)
-        messages <- username
+        client := &http.Client{}
+
+        fb_path := GRAPH_API + "/" + fbuid + "?fields=" + request_path
+
+        log.Println("Calling Facebook : " + fb_path)
+
+        req, err := http.NewRequest(r.Method, fb_path, nil)
+        req.Header = r.Header
+
+        response, err := client.Do(req)
+
+        defer response.Body.Close()
+
+        buf := &bytes.Buffer{}
+        _, err = io.Copy(buf, response.Body)
+
+        if err != nil {
+          panic(err)
+        }
+
+        ret := buf.Bytes()
+        messages <- ret
+        store.Set(key, string(ret), *ttl)
 
       } else {
-        username, _ := redis.String(n, nil)
-        messages <- username
+        messages <- []byte(read)
       }
       mutex.Unlock()
     } else {
-      username, _ := redis.String(n, nil)
-      messages <- username
+      messages <- []byte(read)
     }
 
-  }(fbuid)
+  }(fbuid, request_path)
 
-  fmt.Fprintf(w, "Hello, %q", html.EscapeString(<- messages))
+  //fmt.Fprintf(w, "%q", html.EscapeString(<- messages))
+  w.Header().Set("Content-Type", "application/json")
+  w.Write(<- messages)
 }
 
 
@@ -97,11 +104,14 @@ func main() {
 
   //store := SetupRedis()
   store := SetupMemory()
-  //defer redisPool.Close()
 
   router := mux.NewRouter()
 
-  router.HandleFunc("/user/{fbuid:[0-9]+}/profile", func (w http.ResponseWriter, r *http.Request) {
+  router.HandleFunc("/proxy/{fbuid:[0-9]+}", func (w http.ResponseWriter, r *http.Request) {
+    profileHander(w, r, store)
+  }).Methods("GET")
+
+  router.HandleFunc("/proxy/{fbuid:[0-9]+}/{request_path:.*}", func (w http.ResponseWriter, r *http.Request) {
     profileHander(w, r, store)
   }).Methods("GET")
 
