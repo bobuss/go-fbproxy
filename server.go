@@ -8,7 +8,6 @@ import (
   "bytes"
 	"net/http"
 	"github.com/gorilla/mux"
-  //"github.com/garyburd/redigo/redis"
   flag "github.com/ogier/pflag"
   storage "./storage"
 )
@@ -92,7 +91,6 @@ func profileHander(w http.ResponseWriter, r *http.Request, store storage.Storage
 
   }(fbuid, request_path)
 
-  //fmt.Fprintf(w, "%q", html.EscapeString(<- messages))
   w.Header().Set("Content-Type", "application/json")
   w.Write(<- messages)
 }
