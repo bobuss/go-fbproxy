@@ -1,12 +1,14 @@
 import asyncio
 import aiohttp
 
-urls = ['http://localhost:3000/proxy/%s?fields=' % i for i in range(742716166, 742716366)]
+urls = ['http://localhost:3000/proxy/%s' % i for i in range(4, 115)]
+
 
 @asyncio.coroutine
 def get(*args, **kwargs):
     response = yield from aiohttp.request('GET', *args, **kwargs)
-    return (yield from response.read_and_close(decode=True))
+    return (yield from response.read_and_close(decode=False))
+
 
 @asyncio.coroutine
 def scrap(url):

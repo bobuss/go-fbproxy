@@ -100,8 +100,8 @@ func main() {
 
   flag.Parse()
 
-  //store := SetupRedis()
-  store := SetupMemory()
+  store := SetupRedis()
+  //store := SetupMemory()
 
   router := mux.NewRouter()
 
@@ -120,5 +120,8 @@ func main() {
   http.Handle("/", router)
 
   log.Println("Listening...")
-  http.ListenAndServe(":3000", nil)
+  err := http.ListenAndServe(":3000", nil)
+  if err != nil {
+    log.Fatal("ListenAndServe: ", err)
+  }
 }
